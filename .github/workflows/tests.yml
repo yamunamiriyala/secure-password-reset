@@ -1,0 +1,67 @@
+# Continuous integration for the password reset library.
+#
+# The suite is pure standard library, so there is nothing to install and no
+# lockfile to cache. That keeps this workflow honest: if it passes here it
+# passes on any machine with the same Python version, because there is no
+# hidden dependency resolution between the two.
+#
+# The matrix is the point. A single Python version proves the code works on
+# that version; three prove it does not depend on behaviour that changed
+# between them. `datetime`, `hashlib` and `secrets` are all stable, but
+# type-annotation syntax and dataclass behaviour are not, and this repo uses
+# `from __future__ import annotations` precisely to stay portable across them.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same branch. Without this, pushing three
+# commits to a pull request in quick succession runs the suite three times and
+# only the last result matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The workflow reads code and reports status. It needs nothing else, and
+# saying so explicitly means a compromised action cannot escalate.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Run every version even after one fails. A failure on 3.13 alone is a
+      # different diagnosis from a failure everywhere, and fail-fast hides
+      # which of the two you have.
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Report the interpreter under test
+        run: python --version
+
+      - name: Run the test suite
+        # Discovery runs from the repository root so `password_reset` is
+        # importable without installing the package or setting PYTHONPATH.
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Check every module compiles
+        # Catches syntax errors in files no test happens to import — cheap
+        # insurance that costs about a second.
+        run: python -m compileall -q password_reset tests
